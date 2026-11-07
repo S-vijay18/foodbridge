@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <!-- Background Emerald Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="50%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#047857" />
+    </linearGradient>
+
+    <!-- Warm Golden Amber Gradient for Food/Heart -->
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fde047" />
+      <stop offset="50%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.25" />
+    </filter>
+  </defs>
+
+  <!-- Rounded Squircle Base -->
+  <rect width="64" height="64" rx="16" fill="url(#bgGrad)" />
+
+  <!-- Subtle Inner Border Highlight -->
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2" />
+
+  <!-- Main Symbol (Heart + Nutritious Food Bowl / Helping Hands) -->
+  <g filter="url(#glow)">
+    <!-- Food Bowl / Cradle Base -->
+    <path d="M16 34 C16 46 23 51 32 51 C41 51 48 46 48 34 C48 32 16 32 16 34 Z" fill="url(#goldGrad)" />
+    
+    <!-- Bowl Rim Highlight -->
+    <ellipse cx="32" cy="33.5" rx="16" ry="3.5" fill="#fef08a" />
+
+    <!-- Rising Warmth / Life Sprout / Heart -->
+    <!-- Heart in Center -->
+    <path d="M32 14 C28 9 20 11 20 18 C20 25 32 29 32 29 C32 29 44 25 44 18 C44 11 36 9 32 14 Z" fill="#ffffff" />
+    <path d="M32 16 C29 12 23 13 23 19 C23 23.5 32 27 32 27 C32 27 41 23.5 41 19 C41 13 35 12 32 16 Z" fill="url(#goldGrad)" />
+
+    <!-- Fresh Green Leaf Sprout -->
+    <path d="M32 17 C35 11 41 11 43 13 C44 17 38 21 32 21 Z" fill="#34d399" />
+  </g>
+</svg>
