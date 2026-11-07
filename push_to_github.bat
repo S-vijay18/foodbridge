@@ -5,8 +5,8 @@ echo   Pushing FoodBridge to:
 echo   https://github.com/S-vijay18/foodbridge.git
 echo ========================================================
 echo.
-echo Executing git push -u origin main --force ...
-git push -u origin main --force
+echo Executing git push -u origin main ...
+git push -u origin main
 echo.
 if %errorlevel% equ 0 (
     echo ========================================================
@@ -21,4 +21,3 @@ if %errorlevel% equ 0 (
 )
 echo.
 pause
-
