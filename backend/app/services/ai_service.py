@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import math
+import re
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.models.models import Donation, DonationStatus, User, UserRole, DonationCategory
@@ -78,20 +79,15 @@ class AIService:
         matches = []
 
         for d in available_donations:
-            # Calculate distance
             dist = calculate_haversine_distance(ngo_lat, ngo_lng, d.pickup_lat, d.pickup_lng)
             if dist > d.max_pickup_distance_km:
                 continue
             
-            # Hours until expiry
             expiry_aware = d.expiry_time if d.expiry_time.tzinfo else d.expiry_time.replace(tzinfo=timezone.utc)
             hours_left = max(0.1, (expiry_aware - now).total_seconds() / 3600.0)
 
-            # Match scoring components (0-100)
-            # Distance score: closer is better (up to 35 points)
             dist_score = max(0, 35 - (dist * 1.5))
 
-            # Urgency score: 0-12 hours is critical priority (up to 40 points)
             if hours_left <= 6:
                 urgency_score = 40
             elif hours_left <= 12:
@@ -101,7 +97,6 @@ class AIService:
             else:
                 urgency_score = 15
 
-            # Capacity suitability: does remaining quantity fit NGO capacity (up to 25 points)
             if d.estimated_meals <= daily_capacity:
                 capacity_score = 25
             else:
@@ -171,92 +166,154 @@ class AIService:
 
     @staticmethod
     def handle_chatbot_query(db: Session, message: str, user_id: Optional[int] = None) -> Dict[str, Any]:
-        """AI Assistant responding with authoritative food safety, platform guide, and live status queries."""
+        """AI Assistant responding with authoritative live database data, food safety, and rapid navigation."""
         msg_clean = message.strip().lower()
 
-        # Check if user is asking about a specific donation status
-        import re
+        # 1. Contact / Admin / Emergency queries
+        if any(w in msg_clean for w in ["contact", "admin", "phone", "sivaraj", "email", "emergency", "call", "helpdesk"]):
+            return {
+                "reply": "### 📞 FoodBridge Leadership & Emergency Contact\n\n"
+                         "You can contact our Lead Platform Administrator directly:\n\n"
+                         "• **Lead Admin:** Sivaraj (Platform Operations)\n"
+                         "• **Email:** `sivaraj82006@gmail.com`\n"
+                         "• **Emergency Hotline:** `+91 99762 73763`\n"
+                         "• **Headquarters:** FoodBridge Operations Hub, Bangalore, India\n\n"
+                         "For urgent food collection escalations or transport logistics, call the hotline directly.",
+                "suggested_actions": ["Call Emergency Hotline", "Browse Marketplace", "Food Safety Rules"],
+                "source": "admin_directory"
+            }
+
+        # 2. Check live available food listings from database
+        if any(w in msg_clean for w in ["what food", "available", "listings", "biryani", "items", "browse", "food available", "surplus"]):
+            active_donations = db.query(Donation).filter(
+                Donation.status.in_([DonationStatus.AVAILABLE, DonationStatus.PARTIALLY_RESERVED]),
+                Donation.remaining_quantity > 0
+            ).limit(4).all()
+
+            if active_donations:
+                items_text = "\n".join([
+                    f"• **{d.title}** ({d.category.value})\n"
+                    f"  Available: `{d.remaining_quantity} {d.quantity_unit}` (~{d.estimated_meals} meals) • Location: {d.pickup_address.split(',')[0]} • Status: `{d.diet_type.value}`"
+                    for d in active_donations
+                ])
+                return {
+                    "reply": f"### 🍲 Fresh Available Surplus Listings\n\n"
+                             f"Here are the latest active food donations available right now:\n\n"
+                             f"{items_text}\n\n"
+                             f"Click **'Browse Marketplace'** below to view details and request portions for your shelter.",
+                    "suggested_actions": ["Browse Marketplace", "How to Request Food", "Donate Food Now"],
+                    "source": "live_database_query"
+                }
+
+        # 3. Check specific donation tracking ID
         donation_id_match = re.search(r'#?(\d+)', msg_clean)
         if ("status" in msg_clean or "track" in msg_clean or "where is" in msg_clean) and donation_id_match:
             d_id = int(donation_id_match.group(1))
             donation = db.query(Donation).filter(Donation.id == d_id).first()
             if donation:
                 return {
-                    "reply": f"**Donation #{donation.id}: {donation.title}**\n\n"
+                    "reply": f"### 📦 Donation #{donation.id}: {donation.title}\n\n"
                              f"- **Status:** `{donation.status.value}`\n"
-                             f"- **Category:** {donation.category.value}\n"
-                             f"- **Quantity Remaining:** {donation.remaining_quantity} {donation.quantity_unit} (~{donation.estimated_meals} meals)\n"
+                             f"- **Category:** {donation.category.value} ({donation.diet_type.value})\n"
+                             f"- **Stock:** {donation.remaining_quantity} {donation.quantity_unit} (~{donation.estimated_meals} meals)\n"
                              f"- **Pickup Location:** {donation.pickup_address}\n"
-                             f"- **Expiry Deadline:** {donation.expiry_time.strftime('%Y-%m-%d %H:%M')}\n"
-                             f"- **Safety Storage:** {donation.storage_req.value}\n\n"
-                             f"You can view live status tracking and updates under the 'Live Tracking' tab.",
-                    "suggested_actions": ["View Live Tracking", "Contact Donor", "Browse Marketplace"],
+                             f"- **Expiry Window:** {donation.expiry_time.strftime('%Y-%m-%d %H:%M')}\n"
+                             f"- **Storage Protocol:** {donation.storage_req.value}\n\n"
+                             f"You can follow real-time courier GPS movements under the **Live Tracking** page.",
+                    "suggested_actions": ["View Live Tracking", "Contact Admin", "Browse Marketplace"],
                     "source": "database_lookup"
                 }
 
-        # Food Safety Questions
-        if any(w in msg_clean for w in ["safety", "safe", "danger zone", "temperature", "spoil", "storage", "guidelines"]):
+        # 4. Environmental / Impact questions
+        if any(w in msg_clean for w in ["impact", "co2", "carbon", "trees", "water", "statistics", "metric"]):
             return {
-                "reply": "### 🛡️ FoodBridge Food Safety Guidelines\n\n"
-                         "1. **The Temperature Danger Zone:** Bacteria grow fastest between **4°C (40°F) and 60°C (140°F)**. Hot foods must be kept above 60°C; cold foods must be refrigerated below 4°C.\n"
-                         "2. **The 2-Hour Rule:** Perishable cooked foods should not remain at ambient room temperature for more than 2 hours before chilling or delivery.\n"
-                         "3. **Packaging & Hygiene:** All donations must be packaged in clean, food-grade airtight containers. Label allergens clearly (nuts, dairy, gluten, shellfish).\n"
-                         "4. **Eligible Foods:** We accept prepared banquet surplus, bakery items, unblemished raw produce, packaged goods within best-before dates, and intact dairy.\n"
-                         "5. **Exclusions:** We do not accept partially eaten plates, spoiled items, or uninspected wild game.",
-                "suggested_actions": ["Create Safe Donation", "Read Full Safety Policy", "Check Temperature Chart"],
+                "reply": "### 🌿 FoodBridge Environmental & Social Metrics\n\n"
+                         "By diverting surplus food from municipal landfills to verified orphanages and shelters:\n\n"
+                         "• **Meals Delivered:** 4,750+ nutritious plates\n"
+                         "• **Food Rescued:** 1,590+ kg\n"
+                         "• **CO₂ Emissions Averted:** 3,975 kg CO₂e (~190 trees equivalent)\n"
+                         "• **Fresh Water Protected:** ~1,080,000 Liters of agricultural water\n"
+                         "• **Active NGOs & Shelters:** 32 verified organizations",
+                "suggested_actions": ["View Impact Analytics", "Calculate Kitchen Impact", "Donate Food Now"],
+                "source": "impact_engine"
+            }
+
+        # 5. Tamil / Bilingual greetings & queries
+        if any(w in msg_clean for w in ["vanakkam", "sollunga", "tamil", "eppadi", "unavu", "nandri"]):
+            return {
+                "reply": "### 🙏 வணக்கம்! FoodBridge AI உதவி மையம்\n\n"
+                         "உபரி உணவை வீணாக்காமல் ஏழை எளிய மக்கள் மற்றும் ஆதரவற்றோர் இல்லங்களுக்கு கொண்டு சேர்க்க FoodBridge உதவுகிறது.\n\n"
+                         "1. **உணவு வழங்க (Donate):** 'Donate Food' கிளிக் செய்து உணவின் பெயர், அளவு மற்றும் முகவரி உள்ளிடவும்.\n"
+                         "2. **உணவு பெற (NGO Request):** 'Find Food' பக்கத்தில் தேவையான உணவைத் தேர்வு செய்து கோரிக்கை அனுப்பவும்.\n"
+                         "3. **டெலிவரி வாலண்டியர்:** உணவு சேகரித்து டெலிவரி செய்ய வாலண்டியராக இணையலாம்.\n\n"
+                         "அவசர உதவிக்கு தொடர்பு கொள்ளவும்: **+91 99762 73763** (Sivaraj).",
+                "suggested_actions": ["Donate Food Now", "Browse Marketplace", "Emergency Contact"],
+                "source": "tamil_support"
+            }
+
+        # 6. Food Safety & Hygiene Guidelines
+        if any(w in msg_clean for w in ["safety", "safe", "danger zone", "temperature", "spoil", "storage", "guidelines", "hygiene"]):
+            return {
+                "reply": "### 🛡️ FoodBridge Food Safety Guidelines (FSSAI Aligned)\n\n"
+                         "1. **Temperature Danger Zone:** Bacteria multiply fastest between **4°C (40°F) and 60°C (140°F)**.\n"
+                         "   - Hot meals must be maintained strictly **above 60°C**.\n"
+                         "   - Chilled dairy & salads stored **below 4°C**.\n"
+                         "2. **The 2-Hour Maximum Rule:** Cooked perishable foods must be dispatched and chilled within 2 hours of cooking.\n"
+                         "3. **Packaging:** Food must be kept in sealed, food-grade thermal containers.\n"
+                         "4. **Excluded Items:** Partially eaten meals, expired items, or unpacked food with broken packaging are strictly banned.",
+                "suggested_actions": ["Read Full Safety Manual", "Donate Safe Food", "Check Storage Rules"],
                 "source": "food_safety_knowledgebase"
             }
 
-        # How to donate food
-        if any(w in msg_clean for w in ["how to donate", "give food", "donor", "post food"]):
+        # 7. How to donate food
+        if any(w in msg_clean for w in ["how to donate", "give food", "donor", "post food", "publish"]):
             return {
                 "reply": "### 🥗 How to Donate Food on FoodBridge\n\n"
-                         "1. Click **'Donate Food'** in your navigation bar or dashboard.\n"
-                         "2. Fill in the details: food name, category, quantity, preparation time, and safe consumption expiry time.\n"
-                         "3. Upload a photo and indicate storage needs (Refrigerated, Frozen, Ambient, Hot Holding).\n"
-                         "4. Specify your pickup address and available collection time window.\n"
-                         "5. Confirm the **Food Safety Declaration** and submit!\n\n"
-                         "Nearby verified NGOs will receive an instant alert and can submit requests.",
-                "suggested_actions": ["Go to Donate Food", "View Active Listings", "Calculate Meal Portions"],
+                         "1. Click **'Donate Food'** in your navigation bar.\n"
+                         "2. Enter food name, category, quantity (kg/portions), and cooking time.\n"
+                         "3. Select storage protocol (`Hot Holding >60°C`, `Refrigerated`, or `Ambient`).\n"
+                         "4. Specify your pickup address and available window.\n"
+                         "5. Accept the **Food Safety Declaration** and submit!\n\n"
+                         "Nearby verified NGOs will be alerted instantly via AI matching.",
+                "suggested_actions": ["Donate Food Now", "Browse Marketplace", "Estimate Meal Portions"],
                 "source": "assistant_guide"
             }
 
-        # How to request food (NGO)
-        if any(w in msg_clean for w in ["request food", "how to get", "ngo", "claim", "hunger"]):
+        # 8. How to request food (NGO)
+        if any(w in msg_clean for w in ["request food", "how to get", "ngo", "claim", "shelter"]):
             return {
                 "reply": "### 🏢 How to Request Food (For NGOs & Shelters)\n\n"
-                         "1. Navigate to the **'Find Food / Marketplace'** page.\n"
-                         "2. Filter by category, dietary preference (Veg / Non-Veg / Vegan), and distance.\n"
-                         "3. Click **'Request Donation'** on an available food card.\n"
-                         "4. Specify how much quantity you need (partial requests are supported) and beneficiary count.\n"
-                         "5. Once the donor approves your request, a volunteer will be dispatched for pickup, or you can arrange direct pickup!",
-                "suggested_actions": ["Browse Marketplace", "View My Requests", "Update Organization Profile"],
+                         "1. Open the **'Find Food / Marketplace'** page.\n"
+                         "2. Filter by category, distance, or dietary preference (Pure Veg / Vegan).\n"
+                         "3. Click **'Request Food for Shelter'** on any available food card.\n"
+                         "4. Enter required portions and beneficiary count (partial requests are fully supported!).\n"
+                         "5. Once approved by donor, a volunteer courier is auto-assigned for delivery.",
+                "suggested_actions": ["Browse Marketplace", "View My Requests", "Food Safety Rules"],
                 "source": "assistant_guide"
             }
 
-        # Volunteer info
-        if any(w in msg_clean for w in ["volunteer", "delivery", "deliver", "driver"]):
+        # 9. Volunteer Courier information
+        if any(w in msg_clean for w in ["volunteer", "delivery", "deliver", "courier", "driver"]):
             return {
-                "reply": "### 🚴 Volunteer Food Delivery\n\n"
-                         "Volunteers are the backbone of FoodBridge!\n"
-                         "- Switch to the **Volunteer Dashboard** to see available deliveries nearby.\n"
-                         "- Accept an assignment to lock in pickup and delivery locations.\n"
-                         "- Update progress in real time (`Accepted` ➔ `Pickup Started` ➔ `Picked Up` ➔ `In Transit` ➔ `Delivered`).\n"
-                         "- Upload proof-of-delivery photos to verify successful handover.",
-                "suggested_actions": ["View Volunteer Tasks", "Check Route Map", "Delivery Tips"],
+                "reply": "### 🚴 Volunteer Food Delivery Logistics\n\n"
+                         "Volunteers transport hope across communities:\n"
+                         "• Switch to **Volunteer Dashboard** to see active delivery missions.\n"
+                         "• Accept pickup assignments carrying thermal insulated bags.\n"
+                         "• Follow real-time GPS routes on the **Live Tracking Map**.\n"
+                         "• Upload proof-of-delivery photos upon successful handover.",
+                "suggested_actions": ["View Live Tracking", "Volunteer Dashboard", "Delivery Guidelines"],
                 "source": "assistant_guide"
             }
 
-        # General fallback helpful response
+        # Default fallback
         return {
-            "reply": "Hello! I am **BridgeBot**, your FoodBridge AI assistant.\n\n"
-                     "I can assist you with:\n"
-                     "• **Food Safety & Storage:** Temperature guidelines, allergen labeling, and 2-hour rules.\n"
-                     "• **Live Donation Tracking:** Ask `What is the status of donation #1?` to check real-time updates.\n"
-                     "• **Platform Walkthrough:** Guidance on donating surplus food, requesting donations as an NGO, or volunteering for deliveries.\n"
-                     "• **Portion & Impact Estimation:** How much meals your surplus food can provide.\n\n"
-                     "What would you like to explore today?",
-            "suggested_actions": ["How do I donate food?", "Food safety rules", "Track donation #1", "Browse available food"],
+            "reply": "### 👋 Welcome to BridgeBot AI\n\n"
+                     "I am your real-time surplus food rescue & food safety copilot.\n\n"
+                     "Here is how I can assist you right now:\n"
+                     "• **Available Food:** Ask *'What food is available right now?'*\n"
+                     "• **Live Tracking:** Ask *'Track donation #1'*\n"
+                     "• **Food Safety:** Ask *'What are the temperature danger zones?'*\n"
+                     "• **Emergency Contact:** Ask *'Contact Admin'* for Sivaraj's direct line.",
+            "suggested_actions": ["Available Food Listings", "Food Safety Rules", "Contact Admin", "Donate Food Now"],
             "source": "assistant_default"
         }
-
